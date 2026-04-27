@@ -18,6 +18,7 @@ pub fn build(b: *Build) !void {
 
     const strip = b.option(bool, "strip", "Omit debug information") orelse false;
     const pie = b.option(bool, "pie", "Build a Position Independent Executable") orelse false;
+    const use_llvm = b.option(bool, "llvm", "Force use of Zig's LLVM backend and the lld linker") orelse false;
 
     const man_pages = b.option(
         bool,
@@ -26,7 +27,6 @@ pub fn build(b: *Build) !void {
     ) orelse scdoc_found: {
         _ = b.findProgram(&.{"scdoc"}, &.{}) catch |err| switch (err) {
             error.FileNotFound => break :scdoc_found false,
-            else => return err,
         };
         break :scdoc_found true;
     };
@@ -38,7 +38,7 @@ pub fn build(b: *Build) !void {
         // This makes the caching work for the Workaround, and the extra argument is ignored by /bin/sh.
         scdoc.addFileArg(b.path("doc/waylock.1.scd"));
 
-        const stdout = scdoc.captureStdOut();
+        const stdout = scdoc.captureStdOut(.{});
         b.getInstallStep().dependOn(&b.addInstallFile(stdout, "share/man/man1/waylock.1").step);
     }
 
@@ -56,7 +56,7 @@ pub fn build(b: *Build) !void {
             const git_describe_long = b.runAllowFail(
                 &.{ "git", "-C", b.build_root.path orelse ".", "describe", "--long" },
                 &ret,
-                .Inherit,
+                .inherit,
             ) catch break :blk version;
 
             var it = mem.splitScalar(u8, mem.trim(u8, git_describe_long, &std.ascii.whitespace), '-');
@@ -97,20 +97,22 @@ pub fn build(b: *Build) !void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
+            .strip = strip,
         }),
+        .use_llvm = use_llvm,
+        .use_lld = use_llvm,
     });
     waylock.root_module.addOptions("build_options", options);
 
-    waylock.linkLibC();
-    waylock.linkSystemLibrary("pam");
+    waylock.root_module.linkSystemLibrary("pam", .{});
 
     waylock.root_module.addImport("wayland", wayland);
-    waylock.linkSystemLibrary("wayland-client");
+    waylock.root_module.linkSystemLibrary("wayland-client", .{});
 
     waylock.root_module.addImport("xkbcommon", xkbcommon);
-    waylock.linkSystemLibrary("xkbcommon");
+    waylock.root_module.linkSystemLibrary("xkbcommon", .{});
 
-    waylock.root_module.strip = strip;
     waylock.pie = pie;
 
     b.installArtifact(waylock);
