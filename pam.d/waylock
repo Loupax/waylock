@@ -1,1 +1,1 @@
-auth include system-auth
+auth sufficient pam_unix.so try_first_pass
