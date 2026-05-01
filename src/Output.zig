@@ -13,6 +13,8 @@ const ext = wayland.client.ext;
 
 const Lock = @import("Lock.zig");
 
+const gpa = std.heap.c_allocator;
+
 lock: *Lock,
 name: u32,
 wl_output: *wl.Output,
@@ -45,7 +47,7 @@ pub fn destroy(output: *Output) void {
     if (output.surface) |surface| surface.destroy();
 
     output.link.remove();
-    output.lock.gpa.destroy(output);
+    gpa.destroy(output);
 }
 
 fn lock_surface_listener(

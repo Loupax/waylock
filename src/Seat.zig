@@ -12,6 +12,8 @@ const xkb = @import("xkbcommon");
 
 const Lock = @import("Lock.zig");
 
+const gpa = std.heap.c_allocator;
+
 lock: *Lock,
 name: u32,
 wl_seat: *wl.Seat,
@@ -22,8 +24,8 @@ xkb_state: ?*xkb.State = null,
 link: wl.list.Link,
 
 pub fn create(lock: *Lock, name: u32, wl_seat: *wl.Seat) !void {
-    const seat = try lock.gpa.create(Seat);
-    errdefer lock.gpa.destroy(seat);
+    const seat = try gpa.create(Seat);
+    errdefer gpa.destroy(seat);
 
     seat.* = .{
         .lock = lock,
@@ -43,7 +45,7 @@ pub fn destroy(seat: *Seat) void {
     if (seat.xkb_state) |xkb_state| xkb_state.unref();
 
     seat.link.remove();
-    seat.lock.gpa.destroy(seat);
+    gpa.destroy(seat);
 }
 
 fn seat_listener(wl_seat: *wl.Seat, event: wl.Seat.Event, seat: *Seat) void {
@@ -96,14 +98,14 @@ fn keyboard_listener(_: *wl.Keyboard, event: wl.Keyboard.Event, seat: *Seat) voi
             // only care about press events, not release.
         },
         .keymap => |ev| {
-            defer _ = posix.system.close(ev.fd);
+            defer posix.close(ev.fd);
 
             if (ev.format != .xkb_v1) {
                 log.err("unsupported keymap format {d}", .{@intFromEnum(ev.format)});
                 return;
             }
 
-            const keymap_string = posix.mmap(null, ev.size, .{ .READ = true }, .{ .TYPE = .PRIVATE }, ev.fd, 0) catch |err| {
+            const keymap_string = posix.mmap(null, ev.size, posix.PROT.READ, .{ .TYPE = .PRIVATE }, ev.fd, 0) catch |err| {
                 log.err("failed to mmap() keymap fd: {s}", .{@errorName(err)});
                 return;
             };

@@ -3,13 +3,9 @@ const Lock = @This();
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
-const Io = std.Io;
 const log = std.log;
 const mem = std.mem;
 const posix = std.posix;
-const system = std.posix.system;
-const process = std.process;
-const fatal = process.fatal;
 
 const wayland = @import("wayland");
 const wl = wayland.client.wl;
@@ -23,6 +19,8 @@ const auth = @import("auth.zig");
 const Output = @import("Output.zig");
 const Seat = @import("Seat.zig");
 const PasswordBuffer = @import("PasswordBuffer.zig");
+
+const gpa = std.heap.c_allocator;
 
 pub const Color = enum {
     init,
@@ -49,9 +47,6 @@ pub const Options = struct {
         };
     }
 };
-
-io: Io,
-gpa: mem.Allocator,
 
 state: enum {
     /// The session lock object has not yet been created.
@@ -89,10 +84,8 @@ xkb_context: *xkb.Context,
 password: PasswordBuffer,
 auth_connection: auth.Connection,
 
-pub fn run(io: Io, gpa: mem.Allocator, options: Options) void {
+pub fn run(options: Options) void {
     var lock: Lock = .{
-        .io = io,
-        .gpa = gpa,
         .fork_on_lock = options.fork_on_lock,
         .ready_fd = options.ready_fd,
         .ignore_empty_password = options.ignore_empty_password,
@@ -105,7 +98,9 @@ pub fn run(io: Io, gpa: mem.Allocator, options: Options) void {
         .outputs = undefined,
         .xkb_context = xkb.Context.new(.no_flags) orelse fatal_oom(),
         .password = PasswordBuffer.init(),
-        .auth_connection = auth.fork_child(io),
+        .auth_connection = auth.fork_child() catch |err| {
+            fatal("failed to fork child authentication process: {s}", .{@errorName(err)});
+        },
     };
     defer lock.deinit();
 
@@ -185,7 +180,7 @@ pub fn run(io: Io, gpa: mem.Allocator, options: Options) void {
 
         if (lock.pollfds[poll_auth].revents & posix.POLL.IN != 0) {
             var byte: [1]u8 = undefined;
-            var reader = lock.auth_connection.reader(lock.io);
+            var reader = lock.auth_connection.reader();
             reader.interface.readSliceAll(&byte) catch |err| {
                 fatal("failed to read response from child authentication process: {s}", .{@errorName(err)});
             };
@@ -312,7 +307,7 @@ fn registry_event(lock: *Lock, registry: *wl.Registry, event: wl.Registry.Event)
                 const wl_output = try registry.bind(ev.name, wl.Output, 3);
                 errdefer wl_output.release();
 
-                const output = try lock.gpa.create(Output);
+                const output = try gpa.create(Output);
                 errdefer output.destroy();
 
                 output.* = .{
@@ -371,11 +366,12 @@ fn session_lock_listener(_: *ext.SessionLockV1, event: ext.SessionLockV1.Event, 
             assert(lock.state == .locking);
             lock.state = .locked;
             if (lock.ready_fd) |ready_fd| {
-                const file: Io.File = .{ .handle = ready_fd, .flags = .{ .nonblocking = false } };
-                defer file.close(lock.io);
-                file.writeStreamingAll(lock.io, "\n") catch |err| {
-                    fatal("failed to send readiness notification: {s}", .{@errorName(err)});
+                const file = std.fs.File{ .handle = ready_fd };
+                file.writeAll("\n") catch |err| {
+                    log.err("failed to send readiness notification: {s}", .{@errorName(err)});
+                    posix.exit(1);
                 };
+                file.close();
                 lock.ready_fd = null;
             }
             if (lock.fork_on_lock) {
@@ -389,11 +385,11 @@ fn session_lock_listener(_: *ext.SessionLockV1, event: ext.SessionLockV1.Event, 
                 .locking => {
                     log.err("the wayland compositor has denied our attempt to lock the session, " ++
                         "is another ext-session-lock client already running?", .{});
-                    process.exit(1);
+                    posix.exit(1);
                 },
                 .locked => {
                     log.info("the wayland compositor has unlocked the session, exiting", .{});
-                    process.exit(0);
+                    posix.exit(0);
                 },
                 .exiting => unreachable,
             }
@@ -416,7 +412,7 @@ pub fn submit_password(lock: *Lock) void {
 
 fn send_password_to_auth(lock: *Lock) !void {
     defer lock.password.clear();
-    var writer = lock.auth_connection.writer(lock.io);
+    var writer = lock.auth_connection.writer();
     const len_bytes: [4]u8 = @bitCast(@as(u32, @intCast(lock.password.buffer.len)));
     try writer.interface.writeAll(&len_bytes);
     try writer.interface.writeAll(lock.password.buffer);
@@ -431,6 +427,11 @@ pub fn set_color(lock: *Lock, color: Color) void {
     while (it.next()) |output| {
         output.attach_buffer(lock.buffers[@intFromEnum(lock.color)]);
     }
+}
+
+fn fatal(comptime format: []const u8, args: anytype) noreturn {
+    log.err(format, args);
+    posix.exit(1);
 }
 
 fn fatal_oom() noreturn {
@@ -458,31 +459,25 @@ fn create_buffers(
     return buffers;
 }
 
+// TODO: Upstream this to the Zig standard library
+extern fn setsid() posix.pid_t;
+
 fn fork_to_background() void {
-    const pid: system.pid_t = fork: {
-        const rc = system.fork();
-        switch (system.errno(rc)) {
-            .SUCCESS => break :fork @intCast(rc),
-            else => |err| fatal("fork failed: {}", .{err}),
-        }
-    };
+    const pid = posix.fork() catch |err| fatal("fork failed: {s}", .{@errorName(err)});
     if (pid == 0) {
         // This can't fail as we are the child of a fork() and therefore not
         // a process group leader.
-        _ = system.setsid();
+        assert(setsid() != -1);
         // Ensure the working directory is on the root filesystem to avoid potentially
         // blocking some other filesystem from being unmounted.
-        switch (system.errno(system.chdir("/"))) {
-            .SUCCESS => {},
-            else => |err| {
-                // While this is a nice thing to do, it is not critical to the locking functionality
-                // and it is better to allow potentially unlocking the session rather than aborting
-                // and leaving the session locked if this fails.
-                log.warn("failed to change working directory to / on fork: {}", .{err});
-            },
-        }
+        posix.chdirZ("/") catch |err| {
+            // While this is a nice thing to do, it is not critical to the locking functionality
+            // and it is better to allow potentially unlocking the session rather than aborting
+            // and leaving the session locked if this fails.
+            log.warn("failed to change working directory to / on fork: {s}", .{@errorName(err)});
+        };
     } else {
         // Terminate the parent process with a clean exit code.
-        process.exit(0);
+        posix.exit(0);
     }
 }
