@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 const log = std.log;
 const heap = std.heap;
 const posix = std.posix;
+const process = std.process;
 
 const auth = @import("auth.zig");
 
@@ -17,8 +18,7 @@ buffer: []align(heap.page_size_max) u8,
 pub fn init() PasswordBuffer {
     var password: PasswordBuffer = .{
         .buffer = gpa.alignedAlloc(u8, .fromByteUnits(heap.page_size_max), size_max) catch {
-            log.err("failed to allocate password buffer", .{});
-            posix.exit(1);
+            process.fatal("failed to allocate password buffer", .{});
         },
     };
 
@@ -79,13 +79,11 @@ fn prevent_swapping(buffer: []align(heap.page_size_max) const u8) void {
             .SUCCESS => return,
             .AGAIN => continue,
             else => {
-                log.err("mlock() on password buffer failed: E{s}", .{@tagName(errno)});
-                posix.exit(1);
+                process.fatal("mlock() on password buffer failed: E{s}", .{@tagName(errno)});
             },
         }
     }
-    log.err("mlock() on password buffer failed: EAGAIN after 10 attempts", .{});
-    posix.exit(1);
+    process.fatal("mlock() on password buffer failed: EAGAIN after 10 attempts", .{});
 }
 
 fn prevent_dumping_best_effort(buffer: []align(heap.page_size_max) u8) void {

@@ -1,9 +1,9 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const fs = std.fs;
-const io = std.io;
+const Io = std.Io;
 const mem = std.mem;
 const posix = std.posix;
+const process = std.process;
 const log = std.log;
 
 const build_options = @import("build_options");
@@ -30,8 +30,20 @@ const usage =
     \\
 ;
 
-pub fn main() void {
-    const result = flags.parser([*:0]const u8, &.{
+pub fn main(init: process.Init) error{ OutOfMemory, Unexpected }!void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+
+    var stdout_buffer: [512]u8 = undefined;
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
+    const stdout = &stdout_writer.interface;
+
+    var stderr_buffer: [512]u8 = undefined;
+    var stderr_writer = Io.File.stderr().writer(io, &stderr_buffer);
+    const stderr = &stderr_writer.interface;
+
+    const args = try init.minimal.args.toSlice(arena);
+    const result = flags.parser(&.{
         .{ .name = "h", .kind = .boolean },
         .{ .name = "version", .kind = .boolean },
         .{ .name = "log-level", .kind = .arg },
@@ -42,23 +54,23 @@ pub fn main() void {
         .{ .name = "input-color", .kind = .arg },
         .{ .name = "input-alt-color", .kind = .arg },
         .{ .name = "fail-color", .kind = .arg },
-    }).parse(std.os.argv[1..]) catch {
-        fs.File.stderr().writeAll(usage) catch {};
-        posix.exit(1);
+    }).parse(args[1..]) catch {
+        stderr.writeAll(usage) catch {};
+        process.exit(1);
     };
     if (result.flags.h) {
-        fs.File.stdout().writeAll(usage) catch posix.exit(1);
-        posix.exit(0);
+        stdout.writeAll(usage) catch process.exit(1);
+        process.exit(0);
     }
     if (result.args.len != 0) {
         log.err("unknown option '{s}'", .{result.args[0]});
-        fs.File.stderr().writeAll(usage) catch {};
-        posix.exit(1);
+        stderr.writeAll(usage) catch {};
+        process.exit(1);
     }
 
     if (result.flags.version) {
-        fs.File.stdout().writeAll(build_options.version ++ "\n") catch posix.exit(1);
-        posix.exit(0);
+        stdout.writeAll(build_options.version ++ "\n") catch process.exit(1);
+        process.exit(0);
     }
     if (result.flags.@"log-level") |level| {
         if (mem.eql(u8, level, "error")) {
@@ -71,7 +83,7 @@ pub fn main() void {
             runtime_log_level = .debug;
         } else {
             log.err("invalid log level '{s}'", .{level});
-            posix.exit(1);
+            process.exit(1);
         }
     }
 
@@ -82,7 +94,7 @@ pub fn main() void {
     if (result.flags.@"ready-fd") |raw| {
         options.ready_fd = std.fmt.parseInt(posix.fd_t, raw, 10) catch {
             log.err("invalid file descriptor '{s}'", .{raw});
-            posix.exit(1);
+            process.exit(1);
         };
     }
     if (result.flags.@"init-color") |raw| options.init_color = parse_color(raw);
@@ -93,7 +105,7 @@ pub fn main() void {
     if (result.flags.@"input-alt-color") |raw| options.input_alt_color = parse_color(raw);
     if (result.flags.@"fail-color") |raw| options.fail_color = parse_color(raw);
 
-    Lock.run(options);
+    Lock.run(io, init.gpa, options);
 }
 
 fn parse_color(raw: []const u8) u24 {
@@ -105,7 +117,7 @@ fn parse_color(raw: []const u8) u24 {
 
 fn fatal_bad_color(raw: []const u8) noreturn {
     log.err("invalid color '{s}', expected format '0xRRGGBB'", .{raw});
-    posix.exit(1);
+    process.exit(1);
 }
 
 /// Set the default log level based on the build mode.
@@ -126,14 +138,7 @@ fn logFn(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    // waylock is small enough that we don't need scopes
-    comptime assert(scope == .default);
-
     if (@intFromEnum(level) > @intFromEnum(runtime_log_level)) return;
 
-    var buffer: [256]u8 = undefined;
-    const stderr = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
-
-    stderr.print(level.asText() ++ ": " ++ format ++ "\n", args) catch {};
+    log.defaultLog(level, scope, format, args);
 }
