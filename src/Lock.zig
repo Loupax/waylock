@@ -104,6 +104,12 @@ pub fn run(options: Options) void {
     };
     defer lock.deinit();
 
+    // Drop root privileges in the parent — the auth child keeps them for PAM.
+    if (posix.getuid() != posix.geteuid()) {
+        posix.setgid(std.os.linux.getgid()) catch |err| fatal("failed to drop group privileges: {s}", .{@errorName(err)});
+        posix.setuid(posix.getuid()) catch |err| fatal("failed to drop user privileges: {s}", .{@errorName(err)});
+    }
+
     lock.seats.init();
     lock.outputs.init();
 

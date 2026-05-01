@@ -162,6 +162,9 @@ fn converse(
     for (msg, responses) |message, *response| {
         switch (message.msg_style) {
             .prompt_echo_off => {
+                // PAM owns this allocation and calls free() on it, so we
+                // cannot use mlock'd memory here. The password exists in
+                // unprotected heap for the duration of authenticate().
                 response.* = .{
                     .resp = ally.dupeZ(u8, password.buffer) catch {
                         return .buf_err;
