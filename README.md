@@ -102,13 +102,34 @@ export WAYLOCK_VIDEO="$HOME/Videos/lockscreen.mp4"
 
 ### Performance note
 
-Video codec and resolution have a large impact on CPU usage during locking.
-H.264 at 720p decodes roughly 5× cheaper than VP9 at full resolution. A short
-seamless loop re-encoded with ffmpeg works well:
+Codec and resolution have a large impact on CPU usage. Benchmarks on a
+mid-range laptop at 1280×720, measured as ffmpeg % + waylock % (lower is better):
+
+| Format | ffmpeg | waylock | total |
+|---|---|---|---|
+| VP9 full resolution (source) | ~475% | ~44% | ~519% |
+| H.264 full resolution | ~300% | ~57% | ~357% |
+| huffyuv 720p (lossless) | ~182% | ~22% | ~204% |
+| MJPEG 720p | ~122% | ~22% | ~144% |
+| **H.264 720p** | **~94%** | **~18%** | **~112%** |
+| rawvideo 720p | ~66% | ~22% | ~88% |
+
+**H.264 at 720p is the recommended format** — best balance of file size and CPU
+cost. Re-encode a short seamless loop with:
 
 ```sh
 ffmpeg -ss 0 -t 300 -i input.webm -vf scale=1280:720 -c:v libx264 -crf 23 -an lockscreen.mp4
 ```
+
+For the absolute lowest CPU floor, rawvideo requires no decode — ffmpeg just
+pipes bytes. No ffmpeg is needed at all for a raw file; a shell loop suffices:
+
+```sh
+waylock -animation-fd 3 -animation-width 1280 -animation-height 720 \
+  3< <(while true; do cat lockscreen.raw; done)
+```
+
+Note: 10 seconds of rawvideo at 720p is ~2.7GB. Only practical for very short loops.
 
 ### Example with ffmpeg
 
