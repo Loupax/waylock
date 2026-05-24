@@ -36,7 +36,7 @@ const usage =
     \\
     \\  Example:
     \\    waylock -animation-fd 3 -animation-width 1920 -animation-height 1080 \
-    \\      3< <(ffmpeg -stream_loop -1 -i animation.webp -f rawvideo -pix_fmt bgra - 2>/dev/null)
+    \\      3< <(ffmpeg -nostdin -stream_loop -1 -i animation.webp -f rawvideo -pix_fmt bgra - 2>/dev/null)
     \\
 ;
 
