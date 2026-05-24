@@ -11,6 +11,21 @@ if [ -z "$file" ]; then
     exec waylock
 fi
 
+if [[ "$file" == *.bgra ]]; then
+    # Raw BGRA file — dimensions and fps encoded in filename as <name>-WxH@Nfps.bgra
+    base=$(basename "$file" .bgra)
+    dims=$(echo "$base" | grep -oE '[0-9]+x[0-9]+')
+    w=${dims%x*}
+    h=${dims#*x}
+    fps=$(echo "$base" | grep -oE '@[0-9]+fps' | grep -oE '[0-9]+')
+    exec waylock \
+        -animation-fd 3 \
+        -animation-width "$w" \
+        -animation-height "$h" \
+        ${fps:+-animation-fps "$fps"} \
+        3< <(while true; do cat "$file"; done)
+fi
+
 read -r w h < <(ffprobe -v error -select_streams v:0 \
     -show_entries stream=width,height \
     -of csv=p=0 "$file" | tr ',' ' ')

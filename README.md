@@ -82,12 +82,12 @@ typing — the animation runs at full speed while the screen is idle.
 
 ### lock-session helper
 
-The `lock-session` script wraps waylock with ffmpeg, auto-detecting video
-dimensions and frame rate via ffprobe:
+The `lock-session` script handles video decoding and passes frames to waylock:
 
 ```sh
 lock-session                    # plain waylock, no animation
-lock-session /path/to/video.mp4 # video file
+lock-session /path/to/video.mp4 # any ffmpeg-decodable format
+lock-session /path/to/file.bgra # raw BGRA — no ffmpeg required
 ```
 
 If no argument is given, `lock-session` reads the path from the `$WAYLOCK_VIDEO`
@@ -96,6 +96,20 @@ session:
 
 ```sh
 export WAYLOCK_VIDEO="$HOME/Videos/lockscreen.mp4"
+```
+
+**Raw BGRA files** (`.bgra` extension) skip ffmpeg entirely — frames are piped
+with `cat`. Dimensions and frame rate are parsed from the filename:
+
+```
+lockscreen-1920x1080@25fps.bgra   # full convention
+lockscreen-1920x1080.bgra         # fps optional, defaults to 30
+```
+
+Convert a video to raw BGRA with:
+
+```sh
+ffmpeg -i input.mp4 -f rawvideo -pix_fmt bgra - > lockscreen-1920x1080@25fps.bgra
 ```
 
 `make waylock-install` symlinks `lock-session` to `/usr/bin/lock-session`.
@@ -111,25 +125,19 @@ mid-range laptop at 1280×720, measured as ffmpeg % + waylock % (lower is better
 | H.264 full resolution | ~300% | ~57% | ~357% |
 | huffyuv 720p (lossless) | ~182% | ~22% | ~204% |
 | MJPEG 720p | ~122% | ~22% | ~144% |
-| **H.264 720p** | **~94%** | **~18%** | **~112%** |
+| H.264 720p | ~94% | ~18% | ~112% |
 | rawvideo 720p | ~66% | ~22% | ~88% |
+| **raw BGRA file (no ffmpeg)** | **0%** | **~9%** | **~9%** |
 
-**H.264 at 720p is the recommended format** — best balance of file size and CPU
-cost. Re-encode a short seamless loop with:
+**Raw BGRA with a short seamless loop is the recommended setup** — no decoder
+running at all. Only practical for short clips (7 seconds at 1080p ≈ 1.4GB).
 
-```sh
-ffmpeg -ss 0 -t 300 -i input.webm -vf scale=1280:720 -c:v libx264 -crf 23 -an lockscreen.mp4
-```
-
-For the absolute lowest CPU floor, rawvideo requires no decode — ffmpeg just
-pipes bytes. No ffmpeg is needed at all for a raw file; a shell loop suffices:
+For longer or larger videos, **H.264 at 720p** is the best balance of file size
+and CPU cost:
 
 ```sh
-waylock -animation-fd 3 -animation-width 1280 -animation-height 720 \
-  3< <(while true; do cat lockscreen.raw; done)
+ffmpeg -ss 0 -t 30 -i input.webm -vf scale=1280:720 -c:v libx264 -crf 23 -an lockscreen.mp4
 ```
-
-Note: 10 seconds of rawvideo at 720p is ~2.7GB. Only practical for very short loops.
 
 ### Example with ffmpeg
 
