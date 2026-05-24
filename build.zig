@@ -84,6 +84,7 @@ pub fn build(b: *Build) !void {
     scanner.generate("wl_compositor", 4);
     scanner.generate("wl_output", 3);
     scanner.generate("wl_seat", 5);
+    scanner.generate("wl_shm", 1);
     scanner.generate("ext_session_lock_manager_v1", 1);
     scanner.generate("wp_viewporter", 1);
     scanner.generate("wp_single_pixel_buffer_manager_v1", 1);

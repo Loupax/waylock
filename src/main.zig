@@ -28,6 +28,16 @@ const usage =
     \\  -input-alt-color 0xRRGGBB  Set the alternate color used after input.
     \\  -fail-color 0xRRGGBB       Set the color used on authentication failure.
     \\
+    \\  -animation-fd <fd>         File descriptor providing raw BGRA frames (e.g. from ffmpeg).
+    \\  -animation-width <px>      Frame width in pixels (required with -animation-fd).
+    \\  -animation-height <px>     Frame height in pixels (required with -animation-fd).
+    \\  -animation-fps <n>         Playback rate in frames per second (default: 30).
+    \\  -overlay-opacity 0xNN      Alpha of the color overlay on each frame (default: 0x80).
+    \\
+    \\  Example:
+    \\    waylock -animation-fd 3 -animation-width 1920 -animation-height 1080 \
+    \\      3< <(ffmpeg -stream_loop -1 -i animation.webp -f rawvideo -pix_fmt bgra - 2>/dev/null)
+    \\
 ;
 
 pub fn main(init: process.Init) error{ OutOfMemory, Unexpected }!void {
@@ -54,6 +64,11 @@ pub fn main(init: process.Init) error{ OutOfMemory, Unexpected }!void {
         .{ .name = "input-color", .kind = .arg },
         .{ .name = "input-alt-color", .kind = .arg },
         .{ .name = "fail-color", .kind = .arg },
+        .{ .name = "animation-fd", .kind = .arg },
+        .{ .name = "animation-width", .kind = .arg },
+        .{ .name = "animation-height", .kind = .arg },
+        .{ .name = "animation-fps", .kind = .arg },
+        .{ .name = "overlay-opacity", .kind = .arg },
     }).parse(args[1..]) catch {
         stderr.writeAll(usage) catch {};
         process.exit(1);
@@ -104,6 +119,46 @@ pub fn main(init: process.Init) error{ OutOfMemory, Unexpected }!void {
     }
     if (result.flags.@"input-alt-color") |raw| options.input_alt_color = parse_color(raw);
     if (result.flags.@"fail-color") |raw| options.fail_color = parse_color(raw);
+
+    if (result.flags.@"animation-fd") |raw| {
+        const fd = std.fmt.parseInt(posix.fd_t, raw, 10) catch {
+            log.err("invalid file descriptor '{s}'", .{raw});
+            process.exit(1);
+        };
+        options.animation_fd = fd;
+        if (result.flags.@"animation-width" == null or result.flags.@"animation-height" == null) {
+            log.err("-animation-width and -animation-height are required with -animation-fd", .{});
+            process.exit(1);
+        }
+    }
+    if (result.flags.@"animation-width") |raw| {
+        options.animation_width = std.fmt.parseUnsigned(u32, raw, 10) catch {
+            log.err("invalid animation width '{s}'", .{raw});
+            process.exit(1);
+        };
+    }
+    if (result.flags.@"animation-height") |raw| {
+        options.animation_height = std.fmt.parseUnsigned(u32, raw, 10) catch {
+            log.err("invalid animation height '{s}'", .{raw});
+            process.exit(1);
+        };
+    }
+    if (result.flags.@"animation-fps") |raw| {
+        options.animation_fps = std.fmt.parseUnsigned(u32, raw, 10) catch {
+            log.err("invalid animation fps '{s}'", .{raw});
+            process.exit(1);
+        };
+    }
+    if (result.flags.@"overlay-opacity") |raw| {
+        if (raw.len != 4 or !mem.eql(u8, raw[0..2], "0x")) {
+            log.err("invalid overlay opacity '{s}', expected format '0xNN'", .{raw});
+            process.exit(1);
+        }
+        options.overlay_opacity = std.fmt.parseUnsigned(u8, raw[2..], 16) catch {
+            log.err("invalid overlay opacity '{s}', expected format '0xNN'", .{raw});
+            process.exit(1);
+        };
+    }
 
     Lock.run(io, init.gpa, options);
 }
