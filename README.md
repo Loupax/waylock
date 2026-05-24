@@ -94,6 +94,30 @@ waylock -animation-fd 3 -animation-width 1920 -animation-height 1080 \
 `-an` drops the audio track. Any format ffmpeg can decode works — mp4, mkv,
 webp, gif, etc. If the stream ends, waylock falls back to the solid init color.
 
+### Procedural sources (no file needed)
+
+ffmpeg's `lavfi` device can generate animations procedurally. These bypass
+`lock-session` and call waylock directly. Note: `format=yuv444p` is required
+before color filters like `pseudocolor`, as lavfi sources output single-channel
+`gray` on which color filters are a no-op.
+
+**Perlin noise:**
+```sh
+waylock -animation-fd 3 -animation-width 1920 -animation-height 1080 -animation-fps 30 \
+  3< <(ffmpeg -nostdin -f lavfi -i "perlin=s=1920x1080:octaves=4" \
+       -vf "format=yuv444p,pseudocolor=p=magma" \
+       -f rawvideo -pix_fmt bgra - 2>/dev/null)
+```
+
+**Mandelbrot zoom (seahorse valley):**
+```sh
+waylock -animation-fd 3 -animation-width 1920 -animation-height 1080 -animation-fps 30 \
+  3< <(ffmpeg -nostdin -f lavfi \
+       -i "mandelbrot=start_x=-0.743644:start_y=0.131826:start_scale=3:end_scale=0.0001:end_pts=60:maxiter=1024:r=30" \
+       -vf "scale=1920:1080,format=yuv444p,pseudocolor=p=inferno" \
+       -f rawvideo -pix_fmt bgra - 2>/dev/null)
+```
+
 ## Licensing
 
 Waylock is released under the ISC License.

@@ -1,40 +1,8 @@
 #!/bin/bash
 set -e
 
-usage() {
-    echo "usage: lock-session [file | -lavfi <expression> -size <WxH> [-fps <n>]]"
-    exit 1
-}
-
 if [ -z "$1" ]; then
     exec waylock
-fi
-
-if [ "$1" = "-lavfi" ]; then
-    [ -z "$2" ] && usage
-    lavfi="$2"; shift 2
-
-    size="1920x1080"; fps=30; vf=""
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            -size) size="$2"; shift 2 ;;
-            -fps)  fps="$2";  shift 2 ;;
-            -vf)   vf="$2";   shift 2 ;;
-            *) usage ;;
-        esac
-    done
-
-    w="${size%x*}"; h="${size#*x}"
-    vf_chain="scale=${w}:${h},format=yuv444p"
-    [ -n "$vf" ] && vf_chain="${vf_chain},${vf}"
-    exec waylock \
-        -animation-fd 3 \
-        -animation-width "$w" \
-        -animation-height "$h" \
-        -animation-fps "$fps" \
-        3< <(ffmpeg -nostdin -f lavfi -i "$lavfi" \
-             -vf "$vf_chain" -r "$fps" \
-             -f rawvideo -pix_fmt bgra - 2>/dev/null)
 fi
 
 file="$1"
