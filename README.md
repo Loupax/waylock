@@ -91,12 +91,11 @@ lock-session /path/to/file.bgra # raw BGRA — no ffmpeg required
 ```
 
 If no argument is given, `lock-session` reads the path from the `$WAYLOCK_VIDEO`
-environment variable. Set it in `~/.profile` so it is inherited by the graphical
-session:
-
-```sh
-export WAYLOCK_VIDEO="$HOME/Videos/lockscreen.mp4"
-```
+environment variable. Set it in your session startup script so it is inherited
+by the compositor and everything it spawns. The right place depends on your
+login manager — for display managers that do not launch a login shell (e.g.
+SDDM), `~/.profile` is **not** sourced; set it in your compositor's startup
+script instead.
 
 **Raw BGRA files** (`.bgra` extension) skip ffmpeg entirely — frames are piped
 with `cat`. Dimensions and frame rate are parsed from the filename:
