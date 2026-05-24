@@ -20,6 +20,7 @@ const xkb = @import("xkbcommon");
 
 const auth = @import("auth.zig");
 
+const Animation = @import("Animation.zig");
 const Output = @import("Output.zig");
 const Seat = @import("Seat.zig");
 const PasswordBuffer = @import("PasswordBuffer.zig");
@@ -39,6 +40,12 @@ pub const Options = struct {
     input_color: u24 = 0x6c71c4,
     input_alt_color: u24 = 0x6c71c4,
     fail_color: u24 = 0xdc322f,
+    animation_fd: ?posix.fd_t = null,
+    animation_width: u32 = 0,
+    animation_height: u32 = 0,
+    animation_fps: u32 = 30,
+    /// Alpha of the color overlay blended over each animation frame (0=invisible, 255=opaque).
+    overlay_opacity: u8 = 0x80,
 
     fn rgb(options: Options, color: Color) u24 {
         return switch (color) {
@@ -80,7 +87,16 @@ session_lock_manager: ?*ext.SessionLockManagerV1 = null,
 session_lock: ?*ext.SessionLockV1 = null,
 viewporter: ?*wp.Viewporter = null,
 buffer_manager: ?*wp.SinglePixelBufferManagerV1 = null,
+wl_shm: ?*wl.Shm = null,
 buffers: [4]*wl.Buffer,
+
+animation: ?Animation = null,
+/// RGB value of the color currently overlaid on animation frames.
+overlay_color: u24 = 0,
+overlay_opacity: u8 = 0,
+/// Lookup table: color_values[Color enum index] = RGB
+color_values: [4]u24 = .{ 0, 0, 0, 0 },
+last_frame_ms: i64 = 0,
 
 seats: wl.list.Head(Seat, .link),
 outputs: wl.list.Head(Output, .link),
@@ -148,9 +164,35 @@ pub fn run(io: Io, gpa: mem.Allocator, options: Options) void {
     if (lock.viewporter == null) fatal_not_advertised(wp.Viewporter);
     if (lock.buffer_manager == null) fatal_not_advertised(wp.SinglePixelBufferManagerV1);
 
+    lock.color_values = .{
+        options.init_color,
+        options.input_color,
+        options.input_alt_color,
+        options.fail_color,
+    };
+    lock.overlay_color = options.init_color;
+    lock.overlay_opacity = options.overlay_opacity;
+
     lock.buffers = create_buffers(lock.buffer_manager.?, options) catch fatal_oom();
     lock.buffer_manager.?.destroy();
     lock.buffer_manager = null;
+
+    if (options.animation_fd) |anim_fd| {
+        if (lock.wl_shm == null) fatal_not_advertised(wl.Shm);
+        lock.animation = Animation.init(
+            lock.wl_shm.?,
+            anim_fd,
+            options.animation_width,
+            options.animation_height,
+            options.animation_fps,
+        ) catch fatal_oom();
+        lock.animation.?.init_listeners();
+        lock.last_frame_ms = mono_ms();
+    }
+    if (lock.wl_shm) |shm| {
+        shm.destroy();
+        lock.wl_shm = null;
+    }
 
     lock.session_lock = lock.session_lock_manager.?.lock() catch fatal_oom();
     lock.session_lock.?.setListener(*Lock, session_lock_listener, &lock);
@@ -176,9 +218,23 @@ pub fn run(io: Io, gpa: mem.Allocator, options: Options) void {
     while (lock.state != .exiting) {
         lock.flush_wayland_and_prepare_read();
 
-        _ = posix.poll(&lock.pollfds, -1) catch |err| {
+        const poll_timeout: i32 = if (lock.animation) |anim| blk: {
+            const elapsed = mono_ms() - lock.last_frame_ms;
+            const remaining = @as(i64, @intCast(anim.frame_interval_ms)) - elapsed;
+            break :blk @intCast(@max(0, remaining));
+        } else -1;
+
+        _ = posix.poll(&lock.pollfds, poll_timeout) catch |err| {
             fatal("poll() failed: {s}", .{@errorName(err)});
         };
+
+        if (lock.animation != null) {
+            const now = mono_ms();
+            if (now - lock.last_frame_ms >= @as(i64, @intCast(lock.animation.?.frame_interval_ms))) {
+                lock.advance_frame();
+                lock.last_frame_ms = now;
+            }
+        }
 
         if (lock.pollfds[poll_wayland].revents & posix.POLL.IN != 0) {
             const errno = lock.display.readEvents();
@@ -269,6 +325,8 @@ fn flush_wayland_and_prepare_read(lock: *Lock) void {
 
 /// Clean up resources just so we can better use tooling such as valgrind to check for leaks.
 fn deinit(lock: *Lock) void {
+    if (lock.animation) |*anim| anim.deinit();
+    if (lock.wl_shm) |shm| shm.destroy();
     if (lock.compositor) |compositor| compositor.destroy();
     if (lock.viewporter) |viewporter| viewporter.destroy();
     for (lock.buffers) |buffer| buffer.destroy();
@@ -346,6 +404,8 @@ fn registry_event(lock: *Lock, registry: *wl.Registry, event: wl.Registry.Event)
                 lock.viewporter = try registry.bind(ev.name, wp.Viewporter, 1);
             } else if (mem.orderZ(u8, ev.interface, wp.SinglePixelBufferManagerV1.interface.name) == .eq) {
                 lock.buffer_manager = try registry.bind(ev.name, wp.SinglePixelBufferManagerV1, 1);
+            } else if (mem.orderZ(u8, ev.interface, wl.Shm.interface.name) == .eq) {
+                lock.wl_shm = try registry.bind(ev.name, wl.Shm, 1);
             }
         },
         .global_remove => |ev| {
@@ -430,13 +490,49 @@ fn send_password_to_auth(lock: *Lock) !void {
 
 pub fn set_color(lock: *Lock, color: Color) void {
     if (lock.color == color) return;
-
     lock.color = color;
+
+    if (lock.animation != null) {
+        // Takes effect on the next frame advance.
+        lock.overlay_color = lock.color_values[@intFromEnum(color)];
+        return;
+    }
 
     var it = lock.outputs.iterator(.forward);
     while (it.next()) |output| {
         output.attach_buffer(lock.buffers[@intFromEnum(lock.color)]);
     }
+}
+
+fn advance_frame(lock: *Lock) void {
+    const anim = &lock.animation.?;
+    const opacity = if (lock.color == .init) 0 else lock.overlay_opacity;
+    const buf = anim.next_frame(lock.overlay_color, opacity) catch |err| {
+        if (err == error.EndOfStream) {
+            log.warn("animation stream ended, falling back to solid color", .{});
+        } else {
+            log.err("animation read error: {s}", .{@errorName(err)});
+        }
+        anim.deinit();
+        lock.animation = null;
+        // Ensure outputs show the current solid-color buffer.
+        var it = lock.outputs.iterator(.forward);
+        while (it.next()) |output| {
+            output.attach_buffer(lock.buffers[@intFromEnum(lock.color)]);
+        }
+        return;
+    } orelse return; // back buffer still held by compositor — skip tick
+
+    var it = lock.outputs.iterator(.forward);
+    while (it.next()) |output| {
+        output.attach_buffer(buf);
+    }
+}
+
+fn mono_ms() i64 {
+    var ts: posix.timespec = undefined;
+    _ = std.c.clock_gettime(posix.CLOCK.MONOTONIC, &ts);
+    return ts.sec * 1000 + @divTrunc(ts.nsec, std.time.ns_per_ms);
 }
 
 fn fatal_oom() noreturn {
