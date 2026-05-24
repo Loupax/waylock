@@ -112,7 +112,7 @@ Convert a video to raw BGRA with:
 ffmpeg -i input.mp4 -f rawvideo -pix_fmt bgra - > lockscreen-1920x1080@25fps.bgra
 ```
 
-`make waylock-install` symlinks `lock-session` to `/usr/bin/lock-session`.
+`zig build install` installs both `waylock` and `lock-session` to the prefix.
 
 ### Performance note
 

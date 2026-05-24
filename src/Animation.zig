@@ -31,8 +31,18 @@ pub fn init(shm: *wl.Shm, fd: posix.fd_t, width: u32, height: u32, fps: u32) !An
     const frame_size: usize = @as(usize, width) * height * 4;
     const pool_size: usize = frame_size * 2;
 
-    const mem_fd = try posix.memfd_create("waylock-anim", 0);
+    // Set non-blocking so reads in next_frame never stall the event loop.
+    const fl = std.c.fcntl(fd, std.c.F.GETFL, @as(c_int, 0));
+    const nonblock: c_int = @bitCast(@as(u32, @bitCast(std.c.O{ .NONBLOCK = true })));
+    _ = std.c.fcntl(fd, std.c.F.SETFL, fl | nonblock);
+
+    var name_buf: [32]u8 = undefined;
+    const shm_name = std.fmt.bufPrintZ(&name_buf, "/waylock-{d}", .{std.c.getpid()}) catch unreachable;
+    const shm_flags: c_int = @bitCast(@as(u32, @bitCast(std.c.O{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true })));
+    const mem_fd = std.c.shm_open(shm_name, shm_flags, 0o600);
+    if (mem_fd < 0) return error.SystemResources;
     defer _ = std.c.close(mem_fd);
+    defer _ = std.c.shm_unlink(shm_name);
     if (std.c.ftruncate(@intCast(mem_fd), @intCast(pool_size)) < 0) return error.SystemResources;
 
     const shm_data = try posix.mmap(
@@ -88,7 +98,10 @@ pub fn next_frame(anim: *Animation, overlay_color: u24, overlay_alpha: u8) !?*wl
     const back = &anim.buffers[anim.back];
     if (back.in_use) return null;
 
-    try read_all(anim.fd, back.data);
+    read_all(anim.fd, back.data) catch |err| switch (err) {
+        error.WouldBlock => return null,
+        else => return err,
+    };
     blend(back.data, overlay_color, overlay_alpha);
 
     back.in_use = true;
@@ -107,7 +120,10 @@ pub fn deinit(anim: *Animation) void {
 fn read_all(fd: posix.fd_t, buf: []u8) !void {
     var offset: usize = 0;
     while (offset < buf.len) {
-        const n = try posix.read(fd, buf[offset..]);
+        const n = posix.read(fd, buf[offset..]) catch |err| switch (err) {
+            error.WouldBlock => return error.WouldBlock,
+            else => return err,
+        };
         if (n == 0) return error.EndOfStream;
         offset += n;
     }
@@ -122,10 +138,13 @@ fn blend(data: []u8, color: u24, alpha: u8) void {
     const ov_r: u32 = (color >> 16) & 0xff;
     const a: u32 = alpha;
     const ia: u32 = 255 - a;
+    const ov_ba = ov_b * a;
+    const ov_ga = ov_g * a;
+    const ov_ra = ov_r * a;
     var i: usize = 0;
     while (i < data.len) : (i += 4) {
-        data[i + 0] = @intCast((data[i + 0] * ia + ov_b * a) >> 8);
-        data[i + 1] = @intCast((data[i + 1] * ia + ov_g * a) >> 8);
-        data[i + 2] = @intCast((data[i + 2] * ia + ov_r * a) >> 8);
+        data[i + 0] = @intCast((data[i + 0] * ia + ov_ba) >> 8);
+        data[i + 1] = @intCast((data[i + 1] * ia + ov_ga) >> 8);
+        data[i + 2] = @intCast((data[i + 2] * ia + ov_ra) >> 8);
     }
 }

@@ -150,12 +150,9 @@ pub fn main(init: process.Init) error{ OutOfMemory, Unexpected }!void {
         };
     }
     if (result.flags.@"overlay-opacity") |raw| {
-        if (raw.len != 4 or !mem.eql(u8, raw[0..2], "0x")) {
-            log.err("invalid overlay opacity '{s}', expected format '0xNN'", .{raw});
-            process.exit(1);
-        }
-        options.overlay_opacity = std.fmt.parseUnsigned(u8, raw[2..], 16) catch {
-            log.err("invalid overlay opacity '{s}', expected format '0xNN'", .{raw});
+        const hex = if (mem.startsWith(u8, raw, "0x")) raw[2..] else raw;
+        options.overlay_opacity = std.fmt.parseUnsigned(u8, hex, 16) catch {
+            log.err("invalid overlay opacity '{s}', expected a hex byte e.g. '0x80' or '80'", .{raw});
             process.exit(1);
         };
     }

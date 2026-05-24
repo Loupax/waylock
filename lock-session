@@ -18,6 +18,11 @@ if [[ "$file" == *.bgra ]]; then
     w=${dims%x*}
     h=${dims#*x}
     fps=$(echo "$base" | grep -oE '@[0-9]+fps' | grep -oE '[0-9]+')
+    if [[ -z "$w" || -z "$h" || ! "$w" =~ ^[0-9]+$ || ! "$h" =~ ^[0-9]+$ ]]; then
+        echo "lock-session: cannot parse dimensions from '$(basename "$file")'" >&2
+        echo "lock-session: expected filename format: name-WxH@Nfps.bgra (e.g. video-1920x1080@25fps.bgra)" >&2
+        exit 1
+    fi
     exec waylock \
         -animation-fd 3 \
         -animation-width "$w" \

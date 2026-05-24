@@ -117,4 +117,6 @@ pub fn build(b: *Build) !void {
     waylock.pie = pie;
 
     b.installArtifact(waylock);
+
+    b.installFile("lock-session", "bin/lock-session");
 }
