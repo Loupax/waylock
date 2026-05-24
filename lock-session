@@ -25,14 +25,16 @@ if [ "$1" = "-lavfi" ]; then
     done
 
     w="${size%x*}"; h="${size#*x}"
-    vf_arg=(); [ -n "$vf" ] && vf_arg=(-vf "$vf")
+    vf_chain="scale=${w}:${h}"
+    [ -n "$vf" ] && vf_chain="${vf_chain},${vf}"
     exec waylock \
         -animation-fd 3 \
         -animation-width "$w" \
         -animation-height "$h" \
         -animation-fps "$fps" \
-        3< <(ffmpeg -nostdin -f lavfi -i "${lavfi}:size=${size}:rate=${fps}" \
-             "${vf_arg[@]}" -f rawvideo -pix_fmt bgra - 2>/dev/null)
+        3< <(ffmpeg -nostdin -f lavfi -i "$lavfi" \
+             -vf "$vf_chain" -r "$fps" \
+             -f rawvideo -pix_fmt bgra - 2>/dev/null)
 fi
 
 file="$1"
