@@ -1,11 +1,15 @@
 #!/bin/bash
 set -e
 
-if [ -z "$1" ]; then
-    exec waylock
+if [ -n "$1" ]; then
+    file="$1"
+elif [ -n "$WAYLOCK_VIDEO" ]; then
+    file="$WAYLOCK_VIDEO"
 fi
 
-file="$1"
+if [ -z "$file" ]; then
+    exec waylock
+fi
 
 read -r w h < <(ffprobe -v error -select_streams v:0 \
     -show_entries stream=width,height \
