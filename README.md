@@ -80,6 +80,36 @@ Optional flags:
 The state color overlay (init/input/fail) is only blended when you start
 typing — the animation runs at full speed while the screen is idle.
 
+### lock-session helper
+
+The `lock-session` script wraps waylock with ffmpeg, auto-detecting video
+dimensions and frame rate via ffprobe:
+
+```sh
+lock-session                    # plain waylock, no animation
+lock-session /path/to/video.mp4 # video file
+```
+
+If no argument is given, `lock-session` reads the path from the `$WAYLOCK_VIDEO`
+environment variable. Set it in `~/.profile` so it is inherited by the graphical
+session:
+
+```sh
+export WAYLOCK_VIDEO="$HOME/Videos/lockscreen.mp4"
+```
+
+`make waylock-install` symlinks `lock-session` to `/usr/bin/lock-session`.
+
+### Performance note
+
+Video codec and resolution have a large impact on CPU usage during locking.
+H.264 at 720p decodes roughly 5× cheaper than VP9 at full resolution. A short
+seamless loop re-encoded with ffmpeg works well:
+
+```sh
+ffmpeg -ss 0 -t 300 -i input.webm -vf scale=1280:720 -c:v libx264 -crf 23 -an lockscreen.mp4
+```
+
 ### Example with ffmpeg
 
 Use `-pix_fmt bgra` to match the expected byte layout, `-nostdin` to prevent
