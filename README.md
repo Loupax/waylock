@@ -59,6 +59,41 @@ input or before sleep, the [swayidle](https://github.com/swaywm/swayidle)
 utility or a similar program may be used. See the `swayidle(1)` man page
 for details.
 
+## Animation background
+
+Waylock can display an animated background by reading raw BGRA video frames
+from a file descriptor. Decoding is delegated to an external tool such as
+[ffmpeg](https://ffmpeg.org/), keeping waylock free of media dependencies.
+
+Required flags when using animation:
+
+- `-animation-fd <fd>` — file descriptor providing raw BGRA frames
+- `-animation-width <px>` — frame width in pixels
+- `-animation-height <px>` — frame height in pixels
+
+Optional flags:
+
+- `-animation-fps <n>` — playback rate (default: 30)
+- `-overlay-opacity 0xNN` — alpha of the state color tinted over each frame;
+  `0x00` disables blending, `0xff` is fully opaque (default: `0x80`)
+
+The state color overlay (init/input/fail) is only blended when you start
+typing — the animation runs at full speed while the screen is idle.
+
+### Example with ffmpeg
+
+Use `-pix_fmt bgra` to match the expected byte layout, `-nostdin` to prevent
+ffmpeg from altering the terminal state, and `-stream_loop -1` to loop:
+
+```sh
+waylock -animation-fd 3 -animation-width 1920 -animation-height 1080 \
+  3< <(ffmpeg -nostdin -stream_loop -1 -i /path/to/video.mp4 \
+       -an -f rawvideo -pix_fmt bgra - 2>/dev/null)
+```
+
+`-an` drops the audio track. Any format ffmpeg can decode works — mp4, mkv,
+webp, gif, etc. If the stream ends, waylock falls back to the solid init color.
+
 ## Licensing
 
 Waylock is released under the ISC License.

@@ -124,8 +124,8 @@ fn blend(data: []u8, color: u24, alpha: u8) void {
     const ia: u32 = 255 - a;
     var i: usize = 0;
     while (i < data.len) : (i += 4) {
-        data[i + 0] = @intCast((data[i + 0] * ia + ov_b * a) / 255);
-        data[i + 1] = @intCast((data[i + 1] * ia + ov_g * a) / 255);
-        data[i + 2] = @intCast((data[i + 2] * ia + ov_r * a) / 255);
+        data[i + 0] = @intCast((data[i + 0] * ia + ov_b * a) >> 8);
+        data[i + 1] = @intCast((data[i + 1] * ia + ov_g * a) >> 8);
+        data[i + 2] = @intCast((data[i + 2] * ia + ov_r * a) >> 8);
     }
 }

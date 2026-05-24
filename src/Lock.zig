@@ -506,7 +506,8 @@ pub fn set_color(lock: *Lock, color: Color) void {
 
 fn advance_frame(lock: *Lock) void {
     const anim = &lock.animation.?;
-    const buf = anim.next_frame(lock.overlay_color, lock.overlay_opacity) catch |err| {
+    const opacity = if (lock.color == .init) 0 else lock.overlay_opacity;
+    const buf = anim.next_frame(lock.overlay_color, opacity) catch |err| {
         if (err == error.EndOfStream) {
             log.warn("animation stream ended, falling back to solid color", .{});
         } else {
