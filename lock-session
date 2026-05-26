@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+pgrep -x waylock > /dev/null && exit 0
+
 if [ -n "$1" ]; then
     file="$1"
 elif [ -n "$WAYLOCK_VIDEO" ]; then
